@@ -11,6 +11,6 @@ def count_lines(directory):
     return total_lines
 
 if __name__ == "__main__":
-    project_dir = os.getcwd()  # or replace with your Rust project path
+    project_dir = os.getcwd()
     total = count_lines(project_dir)
     print(f"Total lines of Rust code: {total}")
