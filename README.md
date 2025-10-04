@@ -71,12 +71,6 @@ cargo build --release
 cargo run --release
 ```
 
-Or run a specific ROM:
-
-```bash
-./target/release/gameboy_emulator path/to/rom.gb
-```
-
 ## Tested Games
 
 - ✅ **Super Mario Land** - Fully playable
