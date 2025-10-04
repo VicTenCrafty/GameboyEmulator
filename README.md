@@ -137,8 +137,3 @@ Runs at full speed (60 FPS) on modern hardware with optimized release builds.
 
 MIT
 
-## References
-
-- [Pan Docs](https://gbdev.io/pandocs/) - Game Boy technical documentation
-- [Game Boy CPU Manual](http://marc.rawer.de/Gameboy/Docs/GBCPUman.pdf)
-- [mohanson/gameboy](https://github.com/mohanson/gameboy) - Reference implementation
