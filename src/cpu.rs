@@ -98,6 +98,12 @@ impl Cpu {
         }
     }
 
+    pub fn new_gbc() -> Self {
+        let mut cpu = Cpu::new();
+        cpu.registers.a = 0x11; // GBC detection value
+        cpu
+    }
+
     pub fn step(&mut self, mmu: &mut crate::mmu::Mmu) -> u32 {
         // Handle scheduled IME enable (EI takes effect after next instruction)
         if self.ime_scheduled {

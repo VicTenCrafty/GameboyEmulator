@@ -2,7 +2,7 @@ pub const SCREEN_WIDTH: usize = 160;
 pub const SCREEN_HEIGHT: usize = 144;
 
 pub struct Ppu {
-    pub vram: [u8; 0x2000],      // 8KB VRAM
+    pub vram: [[u8; 0x2000]; 2], // 16KB VRAM (2 banks for GBC)
     pub oam: [u8; 0xA0],         // Object Attribute Memory (sprites)
     pub framebuffer: [u32; SCREEN_WIDTH * SCREEN_HEIGHT],
 
@@ -13,11 +13,19 @@ pub struct Ppu {
     pub scx: u8,   // 0xFF43 - Scroll X
     pub ly: u8,    // 0xFF44 - Current scanline
     pub lyc: u8,   // 0xFF45
-    pub bgp: u8,   // 0xFF47 - BG palette
-    pub obp0: u8,  // 0xFF48 - OBJ palette 0
-    pub obp1: u8,  // 0xFF49 - OBJ palette 1
+    pub bgp: u8,   // 0xFF47 - BG palette (DMG)
+    pub obp0: u8,  // 0xFF48 - OBJ palette 0 (DMG)
+    pub obp1: u8,  // 0xFF49 - OBJ palette 1 (DMG)
     pub wy: u8,    // 0xFF4A - Window Y
     pub wx: u8,    // 0xFF4B - Window X
+
+    // GBC-specific registers
+    pub vram_bank: u8,           // 0xFF4F - VRAM bank select (0-1)
+    pub bcps: u8,                // 0xFF68 - BG Color Palette Spec
+    pub bcpd: [u8; 64],          // BG Color Palette Data (8 palettes × 4 colors × 2 bytes)
+    pub ocps: u8,                // 0xFF6A - OBJ Color Palette Spec
+    pub ocpd: [u8; 64],          // OBJ Color Palette Data (8 palettes × 4 colors × 2 bytes)
+    pub is_gbc: bool,
 
     dots: u32, // Dot counter for timing (0-455 per scanline)
     pub frame_ready: bool,
@@ -31,11 +39,49 @@ pub struct Ppu {
 }
 
 impl Ppu {
-    pub fn new() -> Self {
+    fn default_gbc_palette() -> [u8; 64] {
+        let mut palette = [0u8; 64];
+        // Initialize palette 0 with test colors
+        // RGB555 format: 0BBBBBGGGGGRRRRR
+        let test_colors = [
+            (31, 31, 31), // White
+            (31, 0, 0),   // Red
+            (0, 31, 0),   // Green
+            (0, 0, 31),   // Blue
+        ];
+
+        // Palette 0: test colors
+        for (col_idx, &(r, g, b)) in test_colors.iter().enumerate() {
+            let base = col_idx * 2;
+            let color15 = (r & 0x1F) | ((g & 0x1F) << 5) | ((b & 0x1F) << 10);
+            palette[base] = (color15 & 0xFF) as u8;
+            palette[base + 1] = ((color15 >> 8) & 0xFF) as u8;
+        }
+
+        // Palettes 1-7: grayscale
+        let gray_colors = [
+            (31, 31, 31), // White
+            (21, 21, 21), // Light gray
+            (10, 10, 10), // Dark gray
+            (0, 0, 0),    // Black
+        ];
+        for pal in 1..8 {
+            for (col_idx, &(r, g, b)) in gray_colors.iter().enumerate() {
+                let base = pal * 8 + col_idx * 2;
+                let color15 = (r & 0x1F) | ((g & 0x1F) << 5) | ((b & 0x1F) << 10);
+                palette[base] = (color15 & 0xFF) as u8;
+                palette[base + 1] = ((color15 >> 8) & 0xFF) as u8;
+            }
+        }
+        palette
+    }
+
+    pub fn new(is_gbc: bool) -> Self {
+        let default_color = if is_gbc { 0xFFFFFF } else { 0x9BBC0F };
         Ppu {
-            vram: [0; 0x2000],
+            vram: [[0; 0x2000]; 2],
             oam: [0xFF; 0xA0], // Initialize OAM to 0xFF (invalid sprites)
-            framebuffer: [0x9BBC0F; SCREEN_WIDTH * SCREEN_HEIGHT], // Game Boy green
+            framebuffer: [default_color; SCREEN_WIDTH * SCREEN_HEIGHT],
             lcdc: 0x91,
             stat: 0x02, // Start in mode 2 (OAM search)
             scy: 0,
@@ -47,6 +93,12 @@ impl Ppu {
             obp1: 0xFF,
             wy: 0,
             wx: 0,
+            vram_bank: 0,
+            bcps: 0,
+            bcpd: Self::default_gbc_palette(),
+            ocps: 0,
+            ocpd: Self::default_gbc_palette(),
+            is_gbc,
             dots: 0,
             frame_ready: false,
             stat_interrupt: false,
@@ -235,7 +287,19 @@ impl Ppu {
             if tile_map_addr >= 0x2000 {
                 continue;
             }
-            let tile_num = self.vram[tile_map_addr as usize];
+            let tile_num = self.vram[0][tile_map_addr as usize];
+
+            // GBC: Read attributes from VRAM bank 1
+            let (palette_num, flip_x, flip_y, _bg_priority) = if self.is_gbc {
+                let attr = self.vram[1][tile_map_addr as usize];
+                let pal = attr & 0x07;
+                let flip_x = (attr & 0x20) != 0;
+                let flip_y = (attr & 0x40) != 0;
+                let priority = (attr & 0x80) != 0;
+                (pal, flip_x, flip_y, priority)
+            } else {
+                (0, false, false, false)
+            };
 
             // Tile data address (signed vs unsigned addressing)
             // LCDC bit 4 = 1: unsigned mode, tiles at $8000-$8FFF (VRAM 0x0000-0x0FFF)
@@ -253,11 +317,22 @@ impl Ppu {
                 continue;
             }
 
-            // Read tile data
-            let byte1 = self.vram[(tile_addr + pixel_y_in_tile * 2) as usize];
-            let byte2 = self.vram[(tile_addr + pixel_y_in_tile * 2 + 1) as usize];
+            // Read tile data (use correct VRAM bank for GBC)
+            let tile_vram_bank = if self.is_gbc && ((self.vram[1][tile_map_addr as usize] & 0x08) != 0) { 1 } else { 0 };
 
-            let bit = 7 - pixel_x_in_tile;
+            let mut line = pixel_y_in_tile;
+            if flip_y {
+                line = 7 - line;
+            }
+
+            let byte1 = self.vram[tile_vram_bank][(tile_addr + line * 2) as usize];
+            let byte2 = self.vram[tile_vram_bank][(tile_addr + line * 2 + 1) as usize];
+
+            let mut bit = 7 - pixel_x_in_tile;
+            if flip_x {
+                bit = pixel_x_in_tile;
+            }
+
             let color_bit_1 = (byte1 >> bit) & 1;
             let color_bit_2 = (byte2 >> bit) & 1;
             let color_num = (color_bit_2 << 1) | color_bit_1;
@@ -265,7 +340,11 @@ impl Ppu {
             // Store color number for sprite priority
             self.bg_priority[x] = color_num;
 
-            let color = self.get_bg_color(color_num);
+            let color = if self.is_gbc {
+                self.get_gbc_bg_color(color_num, palette_num)
+            } else {
+                self.get_bg_color(color_num)
+            };
             self.framebuffer[y * SCREEN_WIDTH + x] = color;
         }
 
@@ -329,6 +408,15 @@ impl Ppu {
             let flip_x = (attributes & 0x20) != 0;
             let priority = (attributes & 0x80) != 0; // Priority flag: 1 = behind BG colors 1-3
 
+            // GBC: Extract palette number and VRAM bank
+            let (gbc_palette, gbc_vram_bank) = if self.is_gbc {
+                let pal = attributes & 0x07;
+                let bank = if (attributes & 0x08) != 0 { 1 } else { 0 };
+                (pal, bank)
+            } else {
+                (0, 0)
+            };
+
             // Convert to screen coordinates
             let sprite_y = sprite_y_raw as i16 - 16;
             let sprite_x = sprite_x_raw as i16 - 8;
@@ -353,12 +441,12 @@ impl Ppu {
                 (tile_num as u16 * 16) + (line * 2)
             };
 
-            if (tile_addr + 1) as usize >= self.vram.len() {
+            if (tile_addr + 1) as usize >= 0x2000 {
                 continue;
             }
 
-            let byte1 = self.vram[tile_addr as usize];
-            let byte2 = self.vram[(tile_addr + 1) as usize];
+            let byte1 = self.vram[gbc_vram_bank][tile_addr as usize];
+            let byte2 = self.vram[gbc_vram_bank][(tile_addr + 1) as usize];
 
             for x in 0..8 {
                 let pixel_x = sprite_x + x as i16;
@@ -388,7 +476,11 @@ impl Ppu {
                     continue; // Sprite is behind non-transparent background
                 }
 
-                let color = self.get_sprite_color(color_num, palette);
+                let color = if self.is_gbc {
+                    self.get_gbc_sprite_color(color_num, gbc_palette)
+                } else {
+                    self.get_sprite_color(color_num, palette)
+                };
                 self.framebuffer[y * SCREEN_WIDTH + pixel_x as usize] = color;
             }
         }
@@ -417,12 +509,68 @@ impl Ppu {
         }
     }
 
+    fn get_gbc_bg_color(&self, color_num: u8, palette_num: u8) -> u32 {
+        // Each palette is 8 bytes (4 colors × 2 bytes per color)
+        let palette_base = ((palette_num & 0x07) as usize) * 8;
+        let color_offset = ((color_num & 0x03) as usize) * 2;
+        let addr = palette_base + color_offset;
+
+        // Safety check
+        if addr + 1 >= 64 {
+            return 0xFFFFFF; // White fallback
+        }
+
+        // Read 16-bit color (little-endian)
+        let low = self.bcpd[addr] as u16;
+        let high = self.bcpd[addr + 1] as u16;
+        let color15 = low | (high << 8);
+
+        self.convert_gbc_color(color15)
+    }
+
+    fn get_gbc_sprite_color(&self, color_num: u8, palette_num: u8) -> u32 {
+        // Each palette is 8 bytes (4 colors × 2 bytes per color)
+        let palette_base = ((palette_num & 0x07) as usize) * 8;
+        let color_offset = ((color_num & 0x03) as usize) * 2;
+        let addr = palette_base + color_offset;
+
+        // Safety check
+        if addr + 1 >= 64 {
+            return 0xFFFFFF; // White fallback
+        }
+
+        // Read 16-bit color (little-endian)
+        let low = self.ocpd[addr] as u16;
+        let high = self.ocpd[addr + 1] as u16;
+        let color15 = low | (high << 8);
+
+        self.convert_gbc_color(color15)
+    }
+
+    fn convert_gbc_color(&self, color15: u16) -> u32 {
+        // GBC uses 15-bit RGB555 format: 0BBBBBGGGGGRRRRR
+        let r = (color15 & 0x1F) as u32;
+        let g = ((color15 >> 5) & 0x1F) as u32;
+        let b = ((color15 >> 10) & 0x1F) as u32;
+
+        // Convert from 5-bit to 8-bit
+        // Shift left by 3 and copy top 3 bits to bottom for full range
+        let r8 = (r << 3) | (r >> 2);
+        let g8 = (g << 3) | (g >> 2);
+        let b8 = (b << 3) | (b >> 2);
+
+        // minifb expects 0RGB format
+        (r8 << 16) | (g8 << 8) | b8
+    }
+
     pub fn read_vram(&self, addr: u16) -> u8 {
-        self.vram[(addr - 0x8000) as usize]
+        let bank = if self.is_gbc { self.vram_bank as usize } else { 0 };
+        self.vram[bank][(addr - 0x8000) as usize]
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
-        self.vram[(addr - 0x8000) as usize] = value;
+        let bank = if self.is_gbc { self.vram_bank as usize } else { 0 };
+        self.vram[bank][(addr - 0x8000) as usize] = value;
     }
 
     pub fn read_oam(&self, addr: u16) -> u8 {

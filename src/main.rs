@@ -22,7 +22,7 @@ fn main() {
 
     // Open file dialog to select ROM
     let rom_path = match rfd::FileDialog::new()
-        .add_filter("Game Boy ROM", &["gb"])
+        .add_filter("Game Boy ROM", &["gb", "gbc"])
         .set_title("Select a Game Boy ROM")
         .pick_file()
     {
@@ -36,6 +36,9 @@ fn main() {
     let rom_path_str = rom_path.to_string_lossy().to_string();
     println!("Loading ROM: {}", rom_path_str);
 
+    // Detect GBC mode based on file extension
+    let is_gbc = rom_path_str.to_lowercase().ends_with(".gbc");
+
     let cartridge = match Cartridge::load(&rom_path_str) {
         Ok(cart) => cart,
         Err(e) => {
@@ -44,8 +47,8 @@ fn main() {
         }
     };
 
-    let mut mmu = Mmu::new(cartridge);
-    let mut cpu = Cpu::new();
+    let mut mmu = Mmu::new(cartridge, is_gbc);
+    let mut cpu = if is_gbc { Cpu::new_gbc() } else { Cpu::new() };
 
     // Setup audio output
     let audio_buffer = mmu.apu.get_audio_buffer();
