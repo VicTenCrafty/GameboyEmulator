@@ -103,11 +103,7 @@ This emulator aims for high accuracy:
 - Save RAM
 
 ### What's Missing
-- Audio playback (registers emulated, no output)
 - Game Boy Color support
-- Serial/link cable
-- Real-time clock (MBC3)
-- Save states
 
 ## Architecture
 
