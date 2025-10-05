@@ -48,7 +48,7 @@ A high-accuracy Game Boy (DMG) emulator written in Rust.
 - ✅ Channel 3: Programmable wave
 - ✅ Channel 4: Noise
 - ✅ Master volume and panning
-- ⚠️ Audio output not yet implemented
+- ✅ Audio output implemented (but may sound a little bit weird)
 
 ## Controls
 
