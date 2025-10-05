@@ -7,6 +7,7 @@ enum CartridgeType {
     Mbc1,
     Mbc2,
     Mbc3,
+    Mbc5,
 }
 
 #[derive(Clone, Copy)]
@@ -25,6 +26,14 @@ pub struct Cartridge {
     // MBC3 RTC registers
     rtc_register: u8,
     rtc_latched: bool,
+    // MBC5 registers
+    rom_bank_low: u8,   // MBC5: lower 8 bits of ROM bank
+    rom_bank_high: u8,  // MBC5: 9th bit of ROM bank
+    ram_bank: u8,       // MBC5: RAM bank (4 bits)
+    // Save file support
+    save_path: Option<String>,
+    #[allow(dead_code)]
+    has_battery: bool,
 }
 
 impl Cartridge {
@@ -37,14 +46,27 @@ impl Cartridge {
 
         // Determine cartridge type
         let cart_type_byte = if rom.len() >= 0x148 { rom[0x147] } else { 0 };
-        let cart_type = match cart_type_byte {
-            0x00 => CartridgeType::RomOnly,
-            0x01..=0x03 => CartridgeType::Mbc1,
-            0x05..=0x06 => CartridgeType::Mbc2,
-            0x0F..=0x13 => CartridgeType::Mbc3,
+        let (cart_type, has_battery) = match cart_type_byte {
+            0x00 => (CartridgeType::RomOnly, false),
+            0x01 => (CartridgeType::Mbc1, false),
+            0x02 => (CartridgeType::Mbc1, false),
+            0x03 => (CartridgeType::Mbc1, true),
+            0x05 => (CartridgeType::Mbc2, false),
+            0x06 => (CartridgeType::Mbc2, true),
+            0x0F => (CartridgeType::Mbc3, true),
+            0x10 => (CartridgeType::Mbc3, true),
+            0x11 => (CartridgeType::Mbc3, false),
+            0x12 => (CartridgeType::Mbc3, false),
+            0x13 => (CartridgeType::Mbc3, true),
+            0x19 => (CartridgeType::Mbc5, false),
+            0x1A => (CartridgeType::Mbc5, false),
+            0x1B => (CartridgeType::Mbc5, true),
+            0x1C => (CartridgeType::Mbc5, false),
+            0x1D => (CartridgeType::Mbc5, false),
+            0x1E => (CartridgeType::Mbc5, true),
             _ => {
                 println!("Warning: Unsupported cartridge type 0x{:02X}, defaulting to MBC1", cart_type_byte);
-                CartridgeType::Mbc1
+                (CartridgeType::Mbc1, false)
             }
         };
 
@@ -59,13 +81,40 @@ impl Cartridge {
             println!("ROM size: 0x{:02X}", rom_size);
         }
 
-        // Initialize RAM based on cartridge type
-        let ram_size = match cart_type {
-            CartridgeType::RomOnly => 0,
-            CartridgeType::Mbc2 => 512, // MBC2 has built-in 512x4 bits RAM
-            _ => 0x8000, // 32KB for MBC1/MBC3
+        // Initialize RAM based on cartridge type and RAM size byte
+        let ram_size_byte = if rom.len() >= 0x149 { rom[0x149] } else { 0 };
+        let ram_size = match ram_size_byte {
+            0x00 => 0,
+            0x01 => 0x800,      // 2KB (unused)
+            0x02 => 0x2000,     // 8KB
+            0x03 => 0x8000,     // 32KB (4 banks)
+            0x04 => 0x20000,    // 128KB (16 banks)
+            0x05 => 0x10000,    // 64KB (8 banks)
+            _ => {
+                if cart_type == CartridgeType::Mbc2 {
+                    512 // MBC2 has built-in 512x4 bits RAM
+                } else {
+                    0
+                }
+            }
         };
-        let ram = vec![0; ram_size];
+        let mut ram = vec![0; ram_size];
+
+        // Generate save file path
+        let save_path = if has_battery && ram_size > 0 {
+            let save_file = path.replace(".gb", ".sav").replace(".gbc", ".sav");
+            Some(save_file)
+        } else {
+            None
+        };
+
+        // Load saved RAM if exists
+        if let Some(ref save_file) = save_path {
+            if let Ok(mut file) = File::open(save_file) {
+                let _ = file.read_to_end(&mut ram);
+                println!("Loaded save file: {}", save_file);
+            }
+        }
 
         Ok(Cartridge {
             rom,
@@ -76,10 +125,31 @@ impl Cartridge {
             ram_enabled: false,
             rtc_register: 0,
             rtc_latched: false,
+            rom_bank_low: 0x01,
+            rom_bank_high: 0x00,
+            ram_bank: 0x00,
+            save_path,
+            has_battery,
         })
     }
 
+    pub fn save(&self) {
+        if let Some(ref save_file) = self.save_path {
+            if let Ok(mut file) = File::create(save_file) {
+                use std::io::Write;
+                let _ = file.write_all(&self.ram);
+                println!("Saved to: {}", save_file);
+            }
+        }
+    }
+
     fn rom_bank(&self) -> usize {
+        if self.cart_type == CartridgeType::Mbc5 {
+            // MBC5 uses 9-bit ROM bank (0-511)
+            let bank = ((self.rom_bank_high as usize & 0x01) << 8) | (self.rom_bank_low as usize);
+            return bank;
+        }
+
         let n = match self.bank_mode {
             BankMode::Rom => self.bank & 0x7F, // Use all 7 bits
             BankMode::Ram => self.bank & 0x1F, // Use only lower 5 bits
@@ -89,6 +159,10 @@ impl Cartridge {
     }
 
     fn ram_bank(&self) -> usize {
+        if self.cart_type == CartridgeType::Mbc5 {
+            return (self.ram_bank & 0x0F) as usize;
+        }
+
         let n = match self.bank_mode {
             BankMode::Rom => 0x00,                    // Always bank 0
             BankMode::Ram => (self.bank & 0x60) >> 5, // Upper 2 bits
@@ -259,6 +333,28 @@ impl Cartridge {
                         } else if value == 0x00 {
                             self.rtc_latched = false;
                         }
+                    }
+                    _ => {}
+                }
+            }
+
+            CartridgeType::Mbc5 => {
+                match address {
+                    0x0000..=0x1FFF => {
+                        // RAM Enable
+                        self.ram_enabled = (value & 0x0F) == 0x0A;
+                    }
+                    0x2000..=0x2FFF => {
+                        // ROM Bank Number (lower 8 bits)
+                        self.rom_bank_low = value;
+                    }
+                    0x3000..=0x3FFF => {
+                        // ROM Bank Number (9th bit)
+                        self.rom_bank_high = value & 0x01;
+                    }
+                    0x4000..=0x5FFF => {
+                        // RAM Bank Number (4 bits)
+                        self.ram_bank = value & 0x0F;
                     }
                     _ => {}
                 }
