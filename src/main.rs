@@ -16,10 +16,27 @@ use std::sync::{Arc, Mutex};
 const SCALE: usize = 3;
 
 fn main() {
-    let rom_path = "SuperMarioLand.gb";
+    println!("========================================");
+    println!("  Game Boy Emulator");
+    println!("========================================\n");
 
-    println!("Loading ROM: {}", rom_path);
-    let cartridge = match Cartridge::load(rom_path) {
+    // Open file dialog to select ROM
+    let rom_path = match rfd::FileDialog::new()
+        .add_filter("Game Boy ROM", &["gb", "gbc"])
+        .set_title("Select a Game Boy ROM")
+        .pick_file()
+    {
+        Some(path) => path,
+        None => {
+            println!("No ROM file selected. Exiting.");
+            return;
+        }
+    };
+
+    let rom_path_str = rom_path.to_string_lossy().to_string();
+    println!("Loading ROM: {}", rom_path_str);
+
+    let cartridge = match Cartridge::load(&rom_path_str) {
         Ok(cart) => cart,
         Err(e) => {
             eprintln!("Failed to load ROM: {}", e);
@@ -46,8 +63,16 @@ fn main() {
     println!("  OBP1: 0x{:02X}", mmu.ppu.obp1);
     println!("");
 
+    // Extract ROM name for window title
+    let rom_name = rom_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("Game Boy");
+
+    let window_title = format!("Game Boy Emulator - {}", rom_name);
+
     let mut window = Window::new(
-        "Gameboy Emulator",
+        &window_title,
         ppu::SCREEN_WIDTH * SCALE,
         ppu::SCREEN_HEIGHT * SCALE,
         WindowOptions::default(),
