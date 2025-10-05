@@ -22,6 +22,7 @@ A high-accuracy Game Boy (DMG) emulator written in Rust.
 - ✅ Accurate LCD mode transitions
 - ✅ STAT interrupts (Mode 0/1/2, LYC=LY)
 - ✅ LCD on/off handling
+- ✅ Gameboy Color support semi-implemented (not all games work. when you encounter a game that doesnt work, please submit an issue request!)
 
 ### Memory
 - ✅ Full memory map emulation
@@ -101,9 +102,6 @@ This emulator aims for high accuracy:
 - Interrupts
 - Cartridge types (MBC1/2/3)
 - Save RAM
-
-### What's Missing
-- Game Boy Color support
 
 ## Architecture
 
