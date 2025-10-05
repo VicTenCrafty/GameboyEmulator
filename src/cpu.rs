@@ -100,7 +100,14 @@ impl Cpu {
 
     pub fn new_gbc() -> Self {
         let mut cpu = Cpu::new();
+        // GBC boot register values
         cpu.registers.a = 0x11; // GBC detection value
+        cpu.registers.b = 0x00;
+        cpu.registers.c = 0x00; // CGB mode (not in DMG compatibility)
+        cpu.registers.d = 0xFF;
+        cpu.registers.e = 0x56;
+        cpu.registers.h = 0x00;
+        cpu.registers.l = 0x0D;
         cpu
     }
 
@@ -407,6 +414,23 @@ impl Cpu {
 
             // Misc
             0x00 => 4, // NOP
+            0x10 => {
+                // STOP - Halts CPU and LCD until button press
+                // Read and discard the next byte (always 0x00)
+                self.read_byte_pc(mmu);
+
+                // On GBC with KEY1 bit 0 set, this performs speed switching
+                // Otherwise, it acts like HALT (stops until interrupt)
+                let key1 = mmu.read_byte(0xFF4D);
+                if (key1 & 0x01) != 0 {
+                    // Speed switch requested - toggle speed and clear bit 0
+                    mmu.write_byte(0xFF4D, key1 ^ 0x80);
+                }
+
+                // STOP always halts like HALT
+                self.halted = true;
+                4
+            }
             0x76 => { self.halted = true; 4 } // HALT
             0xF3 => { self.ime = false; self.ime_scheduled = false; 4 } // DI
             0xFB => { self.ime_scheduled = true; 4 } // EI (takes effect after next instruction)

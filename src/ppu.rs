@@ -82,8 +82,8 @@ impl Ppu {
             vram: [[0; 0x2000]; 2],
             oam: [0xFF; 0xA0], // Initialize OAM to 0xFF (invalid sprites)
             framebuffer: [default_color; SCREEN_WIDTH * SCREEN_HEIGHT],
-            lcdc: 0x91,
-            stat: 0x02, // Start in mode 2 (OAM search)
+            lcdc: 0x91, // Post-boot ROM value
+            stat: 0x85, // Post-boot value (varies)
             scy: 0,
             scx: 0,
             ly: 0,
@@ -93,10 +93,10 @@ impl Ppu {
             obp1: 0xFF,
             wy: 0,
             wx: 0,
-            vram_bank: 0,
-            bcps: 0,
+            vram_bank: if is_gbc { 0xFE } else { 0 }, // Post-boot: 0xFE for GBC
+            bcps: if is_gbc { 0xC8 } else { 0 },
             bcpd: Self::default_gbc_palette(),
-            ocps: 0,
+            ocps: if is_gbc { 0xD0 } else { 0 },
             ocpd: Self::default_gbc_palette(),
             is_gbc,
             dots: 0,
@@ -564,12 +564,12 @@ impl Ppu {
     }
 
     pub fn read_vram(&self, addr: u16) -> u8 {
-        let bank = if self.is_gbc { self.vram_bank as usize } else { 0 };
+        let bank = if self.is_gbc { (self.vram_bank & 0x01) as usize } else { 0 };
         self.vram[bank][(addr - 0x8000) as usize]
     }
 
     pub fn write_vram(&mut self, addr: u16, value: u8) {
-        let bank = if self.is_gbc { self.vram_bank as usize } else { 0 };
+        let bank = if self.is_gbc { (self.vram_bank & 0x01) as usize } else { 0 };
         self.vram[bank][(addr - 0x8000) as usize] = value;
     }
 

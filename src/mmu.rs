@@ -35,12 +35,12 @@ impl Mmu {
             timer: Timer::new(),
             apu: Apu::new(),
             wram: [[0; WRAM_SIZE]; 8],
-            wram_bank: 1, // Default to bank 1
+            wram_bank: if is_gbc { 0xF8 } else { 1 }, // Post-boot: 0xF8 for GBC (maps to bank 0/1)
             hram: [0; HRAM_SIZE],
             ie: 0,
-            if_reg: 0,
+            if_reg: if is_gbc { 0xE1 } else { 0 }, // Post-boot value
             is_gbc,
-            key1: 0,
+            key1: if is_gbc { 0x7E } else { 0 }, // Post-boot: 0x7E for GBC
             hdma_source: 0,
             hdma_dest: 0,
         }
@@ -73,12 +73,14 @@ impl Mmu {
                 0xA000..=0xBFFF => self.cartridge.read_ram(source_addr),
                 0xC000..=0xCFFF => self.wram[0][(source_addr - 0xC000) as usize],
                 0xD000..=0xDFFF => {
-                    let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                    let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                    let bank = if bank == 0 { 1 } else { bank };
                     self.wram[bank][(source_addr - 0xD000) as usize]
                 }
                 0xE000..=0xEFFF => self.wram[0][(source_addr - 0xE000) as usize],
                 0xF000..=0xFDFF => {
-                    let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                    let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                    let bank = if bank == 0 { 1 } else { bank };
                     self.wram[bank][(source_addr - 0xF000) as usize]
                 }
                 _ => 0xFF,
@@ -97,12 +99,14 @@ impl Mmu {
             0xC000..=0xCFFF => self.wram[0][(address - 0xC000) as usize], // WRAM bank 0
             0xD000..=0xDFFF => {
                 // WRAM switchable bank (1-7 for GBC, always 1 for DMG)
-                let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                let bank = if bank == 0 { 1 } else { bank }; // Bank 0 acts as bank 1
                 self.wram[bank][(address - 0xD000) as usize]
             }
             0xE000..=0xEFFF => self.wram[0][(address - 0xE000) as usize], // Echo RAM
             0xF000..=0xFDFF => {
-                let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                let bank = if bank == 0 { 1 } else { bank }; // Bank 0 acts as bank 1
                 self.wram[bank][(address - 0xF000) as usize]
             }
             0xFE00..=0xFE9F => self.ppu.read_oam(address), // OAM
@@ -120,12 +124,14 @@ impl Mmu {
             0xA000..=0xBFFF => self.cartridge.write_ram(address, value), // External RAM
             0xC000..=0xCFFF => self.wram[0][(address - 0xC000) as usize] = value,
             0xD000..=0xDFFF => {
-                let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                let bank = if bank == 0 { 1 } else { bank }; // Bank 0 acts as bank 1
                 self.wram[bank][(address - 0xD000) as usize] = value;
             }
             0xE000..=0xEFFF => self.wram[0][(address - 0xE000) as usize] = value,
             0xF000..=0xFDFF => {
-                let bank = if self.is_gbc { self.wram_bank as usize } else { 1 };
+                let bank = if self.is_gbc { (self.wram_bank & 0x07) as usize } else { 1 };
+                let bank = if bank == 0 { 1 } else { bank }; // Bank 0 acts as bank 1
                 self.wram[bank][(address - 0xF000) as usize] = value;
             }
             0xFE00..=0xFE9F => self.ppu.write_oam(address, value), // OAM

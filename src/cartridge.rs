@@ -102,7 +102,13 @@ impl Cartridge {
 
         // Generate save file path
         let save_path = if has_battery && ram_size > 0 {
-            let save_file = path.replace(".gb", ".sav").replace(".gbc", ".sav");
+            let save_file = if path.ends_with(".gbc") {
+                path.replace(".gbc", ".sav")
+            } else if path.ends_with(".gb") {
+                path.replace(".gb", ".sav")
+            } else {
+                format!("{}.sav", path)
+            };
             Some(save_file)
         } else {
             None
