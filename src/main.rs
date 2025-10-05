@@ -22,7 +22,7 @@ fn main() {
 
     // Open file dialog to select ROM
     let rom_path = match rfd::FileDialog::new()
-        .add_filter("Game Boy ROM", &["gb", "gbc"])
+        .add_filter("Game Boy ROM", &["gb"])
         .set_title("Select a Game Boy ROM")
         .pick_file()
     {
